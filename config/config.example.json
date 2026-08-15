@@ -8,5 +8,8 @@
   "Urlscan": {
     "ApiKey": "TU_API_KEY_AQUI",
     "Visibility": "unlisted"
+  },
+  "Whois": {
+    "RdapBaseUri": "https://rdap.org"
   }
 }

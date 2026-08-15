@@ -25,6 +25,7 @@ $ModulesPath = Join-Path $PSScriptRoot "modules"
 Import-Module (Join-Path $ModulesPath "VirusTotal.psm1") -Force
 Import-Module (Join-Path $ModulesPath "AbuseIPDB.psm1") -Force
 Import-Module (Join-Path $ModulesPath "Urlscan.psm1") -Force
+Import-Module (Join-Path $ModulesPath "Whois.psm1") -Force
 
 function Resolve-ConfigPath {
     param([string]$ExplicitPath)
@@ -175,6 +176,12 @@ function Get-OutputResults {
             UrlscanCountry  = $result.UrlscanCountry
             UrlscanDomain   = $result.UrlscanDomain
             UrlscanVisibility = $result.UrlscanVisibility
+            WhoisRegistrar  = $result.WhoisRegistrar
+            WhoisCreated    = $result.WhoisCreated
+            WhoisExpires    = $result.WhoisExpires
+            WhoisStatus     = $result.WhoisStatus
+            WhoisCountry    = $result.WhoisCountry
+            WhoisNetwork    = $result.WhoisNetwork
             Enlace          = $result.Enlace
         }
     }
@@ -202,6 +209,8 @@ if (-not $config.VirusTotal.ApiKey -or $config.VirusTotal.ApiKey -eq "TU_API_KEY
 }
 
 $allResults = New-Object System.Collections.Generic.List[object]
+$rdapBaseUri = $config.Whois.RdapBaseUri
+if (-not $rdapBaseUri) { $rdapBaseUri = "https://rdap.org" }
 
 foreach ($item in $targetList) {
 
@@ -236,6 +245,21 @@ foreach ($item in $targetList) {
     }
     catch {
         Write-Warning "VirusTotal: $_"
+    }
+
+    if ($targetType -in @("Domain", "IP")) {
+        try {
+            $whoisResult = Get-WhoisReport `
+                -Target $target `
+                -TargetType $targetType `
+                -RdapBaseUri $rdapBaseUri
+
+            Write-WhoisSummary -Result $whoisResult
+            $allResults.Add($whoisResult)
+        }
+        catch {
+            Write-Warning "WHOIS/RDAP: $_"
+        }
     }
 
     if ($targetType -eq "URL" -and $config.Urlscan.ApiKey -and $config.Urlscan.ApiKey -ne "TU_API_KEY_AQUI") {
@@ -275,7 +299,7 @@ foreach ($item in $targetList) {
 
 Write-Host "`n=== Resumen ===" -ForegroundColor Cyan
 $outputResults = Get-OutputResults -Results $allResults
-$outputResults | Format-Table Target, Proveedor, Tipo, Maliciosos, Sospechosos, UrlscanScore, UrlscanStatus, AbuseConfidence, TotalReports, CountryCode -AutoSize
+$outputResults | Format-Table Target, Proveedor, Tipo, Maliciosos, Sospechosos, UrlscanScore, UrlscanStatus, WhoisCountry, AbuseConfidence, TotalReports, CountryCode -AutoSize
 
 if ($OutputCsv) {
     $outputResults | Export-Csv -Path $OutputCsv -NoTypeInformation -Encoding UTF8
