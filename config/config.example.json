@@ -1,0 +1,12 @@
+{
+  "VirusTotal": {
+    "ApiKey": "TU_API_KEY_AQUI"
+  },
+  "AbuseIPDB": {
+    "ApiKey": "TU_API_KEY_AQUI"
+  },
+  "Urlscan": {
+    "ApiKey": "TU_API_KEY_AQUI",
+    "Visibility": "unlisted"
+  }
+}
