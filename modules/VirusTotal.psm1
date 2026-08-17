@@ -6,9 +6,8 @@ function ConvertTo-VTUrlId {
         [string]$Url
     )
 
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($Url)
-    $b64 = [Convert]::ToBase64String($bytes)
-    return $b64.TrimEnd('=').Replace('+', '-').Replace('/', '_')
+    $base64Url = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Url))
+    return $base64Url.TrimEnd('=').Replace('+', '-').Replace('/', '_')
 }
 
 function Invoke-VTRequest {
@@ -24,20 +23,20 @@ function Invoke-VTRequest {
         [hashtable]$Body
     )
 
-    $headers = @{ "x-apikey" = $ApiKey }
-    $params = @{
-        Uri     = $Uri
-        Headers = $headers
-        Method  = $Method
+    $requestParameters = @{
+        Uri         = $Uri
+        Headers     = @{ "x-apikey" = $ApiKey }
+        Method      = $Method
         ErrorAction = "Stop"
     }
+
     if ($Body) {
-        $params["Body"] = $Body
-        $params["ContentType"] = "application/x-www-form-urlencoded"
+        $requestParameters.Body = $Body
+        $requestParameters.ContentType = "application/x-www-form-urlencoded"
     }
 
     try {
-        return Invoke-RestMethod @params
+        return Invoke-RestMethod @requestParameters
     }
     catch {
         $statusCode = $null
@@ -54,6 +53,79 @@ function Invoke-VTRequest {
     }
 }
 
+function Get-VTGuiLink {
+    param(
+        [ValidateSet("IP", "Domain", "URL")]
+        [string]$TargetType,
+        [string]$Target,
+        $Response
+    )
+
+    switch ($TargetType) {
+        "IP" { return "https://www.virustotal.com/gui/ip-address/$Target" }
+        "Domain" { return "https://www.virustotal.com/gui/domain/$Target" }
+        "URL" { return "https://www.virustotal.com/gui/url/$($Response.data.id)" }
+    }
+}
+
+function New-VTReport {
+    param(
+        [string]$Target,
+        [ValidateSet("IP", "Domain", "URL")]
+        [string]$TargetType,
+        $Response
+    )
+
+    $typeLabel = switch ($TargetType) {
+        "IP" { "IP" }
+        "Domain" { "Dominio" }
+        "URL" { "URL" }
+    }
+
+    if ($Response) {
+        $statistics = $Response.data.attributes.last_analysis_stats
+        return [PSCustomObject]@{
+            Target       = $Target
+            Tipo         = $typeLabel
+            Maliciosos   = $statistics.malicious
+            Sospechosos  = $statistics.suspicious
+            Limpios      = $statistics.harmless
+            SinDetectar  = $statistics.undetected
+            Reputacion   = $Response.data.attributes.reputation
+            Enlace       = Get-VTGuiLink -TargetType $TargetType -Target $Target -Response $Response
+            Proveedor    = "VirusTotal"
+        }
+    }
+
+    return [PSCustomObject]@{
+        Target       = $Target
+        Tipo         = $typeLabel
+        Maliciosos   = "N/D"
+        Sospechosos  = "N/D"
+        Limpios      = "N/D"
+        SinDetectar  = "N/D"
+        Reputacion   = "N/D"
+        Enlace       = Get-VTGuiLink -TargetType $TargetType -Target $Target
+        Proveedor    = "VirusTotal"
+    }
+}
+
+function New-VTPendingUrlReport {
+    param([string]$Url)
+
+    return [PSCustomObject]@{
+        Target       = $Url
+        Tipo         = "URL"
+        Maliciosos   = "pendiente"
+        Sospechosos  = "pendiente"
+        Limpios      = "pendiente"
+        SinDetectar  = "pendiente"
+        Reputacion   = "N/D"
+        Enlace       = "N/D"
+        Proveedor    = "VirusTotal"
+    }
+}
+
 function Get-VTDomainReport {
     param(
         [Parameter(Mandatory)]
@@ -63,35 +135,8 @@ function Get-VTDomainReport {
         [string]$ApiKey
     )
 
-    $uri = "$script:VTBaseUri/domains/$Domain"
-    $response = Invoke-VTRequest -Uri $uri -ApiKey $ApiKey
-
-    if (-not $response) {
-        return [PSCustomObject]@{
-            Target      = $Domain
-            Tipo        = "Dominio"
-            Maliciosos  = "N/D"
-            Sospechosos = "N/D"
-            Limpios     = "N/D"
-            SinDetectar = "N/D"
-            Reputacion  = "N/D"
-            Enlace      = "https://www.virustotal.com/gui/domain/$Domain"
-            Proveedor   = "VirusTotal"
-        }
-    }
-
-    $stats = $response.data.attributes.last_analysis_stats
-    return [PSCustomObject]@{
-        Target      = $Domain
-        Tipo        = "Dominio"
-        Maliciosos  = $stats.malicious
-        Sospechosos = $stats.suspicious
-        Limpios     = $stats.harmless
-        SinDetectar = $stats.undetected
-        Reputacion  = $response.data.attributes.reputation
-        Enlace      = "https://www.virustotal.com/gui/domain/$Domain"
-        Proveedor   = "VirusTotal"
-    }
+    $response = Invoke-VTRequest -Uri "$script:VTBaseUri/domains/$Domain" -ApiKey $ApiKey
+    return New-VTReport -Target $Domain -TargetType "Domain" -Response $response
 }
 
 function Get-VTUrlReport {
@@ -104,44 +149,20 @@ function Get-VTUrlReport {
     )
 
     $urlId = ConvertTo-VTUrlId -Url $Url
-    $uri = "$script:VTBaseUri/urls/$urlId"
-    $response = Invoke-VTRequest -Uri $uri -ApiKey $ApiKey
+    $response = Invoke-VTRequest -Uri "$script:VTBaseUri/urls/$urlId" -ApiKey $ApiKey
 
     if (-not $response) {
         Write-Host "    (sin informe previo en VT, enviando para analisis...)" -ForegroundColor DarkGray
-        $submitUri = "$script:VTBaseUri/urls"
-        $null = Invoke-VTRequest -Uri $submitUri -ApiKey $ApiKey -Method "POST" -Body @{ url = $Url }
-
+        $null = Invoke-VTRequest -Uri "$script:VTBaseUri/urls" -ApiKey $ApiKey -Method "POST" -Body @{ url = $Url }
         Start-Sleep -Seconds 15
-        $response = Invoke-VTRequest -Uri $uri -ApiKey $ApiKey
-    }
+        $response = Invoke-VTRequest -Uri "$script:VTBaseUri/urls/$urlId" -ApiKey $ApiKey
 
-    if (-not $response) {
-        return [PSCustomObject]@{
-            Target      = $Url
-            Tipo        = "URL"
-            Maliciosos  = "pendiente"
-            Sospechosos = "pendiente"
-            Limpios     = "pendiente"
-            SinDetectar = "pendiente"
-            Reputacion  = "N/D"
-            Enlace      = "N/D"
-            Proveedor   = "VirusTotal"
+        if (-not $response) {
+            return New-VTPendingUrlReport -Url $Url
         }
     }
 
-    $stats = $response.data.attributes.last_analysis_stats
-    return [PSCustomObject]@{
-        Target      = $Url
-        Tipo        = "URL"
-        Maliciosos  = $stats.malicious
-        Sospechosos = $stats.suspicious
-        Limpios     = $stats.harmless
-        SinDetectar = $stats.undetected
-        Reputacion  = $response.data.attributes.reputation
-        Enlace      = "https://www.virustotal.com/gui/url/$($response.data.id)"
-        Proveedor   = "VirusTotal"
-    }
+    return New-VTReport -Target $Url -TargetType "URL" -Response $response
 }
 
 function Get-VTIPReport {
@@ -153,39 +174,8 @@ function Get-VTIPReport {
         [string]$ApiKey
     )
 
-    $uri = "$script:VTBaseUri/ip_addresses/$IPAddress"
-
-    $response = Invoke-VTRequest `
-        -Uri $uri `
-        -ApiKey $ApiKey
-
-    if (-not $response) {
-        return [PSCustomObject]@{
-            Target      = $IPAddress
-            Tipo        = "IP"
-            Maliciosos  = "N/D"
-            Sospechosos = "N/D"
-            Limpios     = "N/D"
-            SinDetectar = "N/D"
-            Reputacion  = "N/D"
-            Enlace      = "https://www.virustotal.com/gui/ip-address/$IPAddress"
-            Proveedor   = "VirusTotal"
-        }
-    }
-
-    $stats = $response.data.attributes.last_analysis_stats
-
-    return [PSCustomObject]@{
-        Target      = $IPAddress
-        Tipo        = "IP"
-        Maliciosos  = $stats.malicious
-        Sospechosos = $stats.suspicious
-        Limpios     = $stats.harmless
-        SinDetectar = $stats.undetected
-        Reputacion  = $response.data.attributes.reputation
-        Enlace      = "https://www.virustotal.com/gui/ip-address/$IPAddress"
-        Proveedor   = "VirusTotal"
-    }
+    $response = Invoke-VTRequest -Uri "$script:VTBaseUri/ip_addresses/$IPAddress" -ApiKey $ApiKey
+    return New-VTReport -Target $IPAddress -TargetType "IP" -Response $response
 }
 
 function Get-VTReport {
@@ -202,29 +192,10 @@ function Get-VTReport {
     )
 
     switch ($TargetType) {
-
-        "IP" {
-            return Get-VTIPReport `
-                -IPAddress $Target `
-                -ApiKey $ApiKey
-        }
-
-        "Domain" {
-            return Get-VTDomainReport `
-                -Domain $Target `
-                -ApiKey $ApiKey
-        }
-
-        "URL" {
-            return Get-VTUrlReport `
-                -Url $Target `
-                -ApiKey $ApiKey
-        }
+        "IP" { return Get-VTIPReport -IPAddress $Target -ApiKey $ApiKey }
+        "Domain" { return Get-VTDomainReport -Domain $Target -ApiKey $ApiKey }
+        "URL" { return Get-VTUrlReport -Url $Target -ApiKey $ApiKey }
     }
 }
 
-Export-ModuleMember -Function `
-    Get-VTReport, `
-    Get-VTDomainReport, `
-    Get-VTUrlReport, `
-    Get-VTIPReport
+Export-ModuleMember -Function Get-VTReport, Get-VTDomainReport, Get-VTUrlReport, Get-VTIPReport

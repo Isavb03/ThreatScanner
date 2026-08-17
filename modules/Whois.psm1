@@ -124,9 +124,12 @@ function Get-WhoisReport {
 }
 
 function Write-WhoisSummary {
-    param([Parameter(Mandatory)]$Result)
+    param(
+        [Parameter(Mandatory)]$Result,
+        [string]$Title = "WHOIS / RDAP"
+    )
 
-    Write-Host "`n  [WHOIS / RDAP]" -ForegroundColor White
+    Write-Host "`n  [$Title]" -ForegroundColor White
     if ($Result.Tipo -eq "Dominio") {
         Write-Host (
             "  Resultado: registrador: {0} | creado: {1} | expira: {2}" -f

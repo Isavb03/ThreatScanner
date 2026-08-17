@@ -133,6 +133,7 @@ function Get-UrlscanReport {
             UrlscanStatus     = "No evaluable"
             UrlscanCountry    = $result.page.country
             UrlscanDomain     = $result.page.domain
+            UrlscanApexDomain = if ($result.page.apexDomain) { $result.page.apexDomain } else { $result.page.domain }
             UrlscanVisibility = $result.task.visibility
             UrlscanScanFailed = $true
             UrlscanDomainCreated = "N/D"
@@ -153,6 +154,7 @@ function Get-UrlscanReport {
         UrlscanStatus     = $result.page.status
         UrlscanCountry    = $result.page.country
         UrlscanDomain     = $result.page.domain
+        UrlscanApexDomain = if ($result.page.apexDomain) { $result.page.apexDomain } else { $result.page.domain }
         UrlscanVisibility = $result.task.visibility
         UrlscanScanFailed = $false
         UrlscanDomainCreated = $domainAge.Date
