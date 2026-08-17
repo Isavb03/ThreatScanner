@@ -29,4 +29,15 @@
 
 urlscan.io analiza URLs y dominios. Los dominios se envian como `https://<dominio>`.
 
-La columna `Confianza` mide el riesgo combinado: verde (0-33%), amarillo (34-66%) y rojo (67-100%). Combina VirusTotal, AbuseIPDB y urlscan.io; RDAP/WHOIS no se usa para el cálculo.
+## Google Safe Browsing
+
+1. Crea un proyecto en [Google Cloud Console](https://console.cloud.google.com/), activa **Safe Browsing APIs** y crea una API key.
+2. Añade la clave en `config/config.json`:
+
+```json
+"GoogleSafeBrowsing": { "ApiKey": "TU_API_KEY_AQUI" }
+```
+
+Google Safe Browsing analiza URLs y se ejecuta con `-U` o con URLs en `-Targets`. Es gratuito para uso no comercial.
+
+La columna `Confianza` mide el riesgo combinado: verde (0-33%), amarillo (34-66%) y rojo (67-100%). Combina VirusTotal, AbuseIPDB, urlscan.io y Google Safe Browsing; RDAP/WHOIS no se usa para el cálculo.

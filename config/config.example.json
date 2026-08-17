@@ -9,6 +9,9 @@
     "ApiKey": "TU_API_KEY_AQUI",
     "Visibility": "unlisted"
   },
+  "GoogleSafeBrowsing": {
+    "ApiKey": "TU_API_KEY_AQUI"
+  },
   "Whois": {
     "RdapBaseUri": "https://rdap.org"
   }

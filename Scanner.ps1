@@ -23,6 +23,7 @@ Import-Module (Join-Path $modulesPath "VirusTotal.psm1") -Force
 Import-Module (Join-Path $modulesPath "AbuseIPDB.psm1") -Force
 Import-Module (Join-Path $modulesPath "Urlscan.psm1") -Force
 Import-Module (Join-Path $modulesPath "Whois.psm1") -Force
+Import-Module (Join-Path $modulesPath "GoogleSafeBrowsing.psm1") -Force
 
 function Get-ConfigPath {
     param([string]$ExplicitPath)
@@ -129,6 +130,10 @@ function Get-ProviderRiskScore {
             $urlscanScore = Get-IntegerValue $Result.UrlscanScore
             if ($null -ne $urlscanScore) { return ($urlscanScore + 100) / 2 }
         }
+        "Google Safe Browsing" {
+            if ($Result.GoogleSafeBrowsingMatched -eq $true) { return 100 }
+            if ($Result.GoogleSafeBrowsingMatched -eq $false) { return 0 }
+        }
     }
 
     return $null
@@ -214,6 +219,10 @@ function New-OutputResult {
         UrlscanScanFailed     = $Result.UrlscanScanFailed
         UrlscanDomainCreated  = $Result.UrlscanDomainCreated
         UrlscanDomainAgeDays  = $Result.UrlscanDomainAgeDays
+        GoogleSafeBrowsingStatus  = $Result.GoogleSafeBrowsingStatus
+        GoogleSafeBrowsingThreats = $Result.GoogleSafeBrowsingThreats
+        GoogleSafeBrowsingMatches = $Result.GoogleSafeBrowsingMatches
+        GoogleSafeBrowsingMatched = $Result.GoogleSafeBrowsingMatched
         WhoisRegistrar        = $Result.WhoisRegistrar
         WhoisCreated          = $Result.WhoisCreated
         WhoisExpires          = $Result.WhoisExpires
@@ -240,16 +249,17 @@ function Get-OutputResults {
 function Write-ResultsSummary {
     param([System.Collections.IEnumerable]$Results)
 
-    $format = "{0,-32} {1,-15} {2,-8} {3,-10} {4,-12} {5,-13} {6,-11} "
-    Write-Host ($format -f "Target", "Proveedor", "Tipo", "Maliciosos", "Sospechosos", "URLScan", "Abuso") -ForegroundColor DarkGray -NoNewline
+    $format = "{0,-32} {1,-22} {2,-8} {3,-10} {4,-12} {5,-13} {6,-11} {7,-21} "
+    Write-Host ($format -f "Target", "Proveedor", "Tipo", "Maliciosos", "Sospechosos", "URLScan", "Abuso", "GoogleSB") -ForegroundColor DarkGray -NoNewline
     Write-Host "Confianza" -ForegroundColor DarkGray
-    Write-Host ($format -f "------", "---------", "----", "----------", "------------", "-------", "-----") -ForegroundColor DarkGray -NoNewline
+    Write-Host ($format -f "------", "---------", "----", "----------", "------------", "-------", "-----", "--------") -ForegroundColor DarkGray -NoNewline
     Write-Host "---------" -ForegroundColor DarkGray
 
     foreach ($result in $Results) {
         Write-Host ($format -f `
                 $result.Target, $result.Proveedor, $result.Tipo, $result.Maliciosos,
-                $result.Sospechosos, $result.UrlscanScore, $result.AbuseConfidence) -NoNewline
+                $result.Sospechosos, $result.UrlscanScore, $result.AbuseConfidence,
+                $result.GoogleSafeBrowsingStatus) -NoNewline
         Write-Host ("{0,9}" -f $result.Confianza) -ForegroundColor $result.ConfidenceColor
     }
 }
@@ -370,6 +380,20 @@ foreach ($targetEntry in $targetList) {
         }
         catch {
             Write-Warning "urlscan.io: $_"
+        }
+    }
+
+    if ($targetType -eq "URL" -and $config.GoogleSafeBrowsing.ApiKey -and $config.GoogleSafeBrowsing.ApiKey -ne "TU_API_KEY_AQUI") {
+        try {
+            $googleSafeBrowsingResult = Get-GoogleSafeBrowsingReport `
+                -Url $target `
+                -ApiKey $config.GoogleSafeBrowsing.ApiKey
+
+            Write-GoogleSafeBrowsingSummary -Result $googleSafeBrowsingResult
+            [void]$allResults.Add($googleSafeBrowsingResult)
+        }
+        catch {
+            Write-Warning "Google Safe Browsing: $_"
         }
     }
 
