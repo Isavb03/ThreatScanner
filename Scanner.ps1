@@ -8,6 +8,10 @@ param(
     [string[]]$Domain,
 
     [Parameter()]
+    [Alias("U")]
+    [string[]]$Url,
+
+    [Parameter()]
     [Alias("IP")]
     [string[]]$IPAddress,
 
@@ -60,72 +64,6 @@ function Get-ScannerConfig {
     }
 }
 
-function Get-TargetList {
-    param(
-        [string[]]$Targets,
-        [string[]]$Domain,
-        [string[]]$IPAddress,
-        [string]$InputFile
-    )
-
-    $list = New-Object System.Collections.Generic.List[object]
-
-    if ($Targets) {
-        foreach ($t in $Targets) {
-            if (-not [string]::IsNullOrWhiteSpace($t)) {
-                $list.Add([PSCustomObject]@{
-                    Target = $t.Trim()
-                    Type   = "Auto"
-                })
-            }
-        }
-    }
-
-    if ($Domain) {
-        foreach ($d in $Domain) {
-            if (-not [string]::IsNullOrWhiteSpace($d)) {
-                $list.Add([PSCustomObject]@{
-                    Target = $d.Trim()
-                    Type   = "Domain"
-                })
-            }
-        }
-    }
-
-    if ($IPAddress) {
-        foreach ($ip in $IPAddress) {
-            if (-not [string]::IsNullOrWhiteSpace($ip)) {
-                $list.Add([PSCustomObject]@{
-                    Target = $ip.Trim()
-                    Type   = "IP"
-                })
-            }
-        }
-    }
-
-    if ($InputFile) {
-        if (-not (Test-Path -LiteralPath $InputFile)) {
-            Write-Error "No se encuentra el fichero de entrada: $InputFile"
-        }
-        else {
-            Get-Content -LiteralPath $InputFile | ForEach-Object {
-                $line = $_.Trim()
-
-                if ($line -and -not $line.StartsWith("#")) {
-                    $list.Add([PSCustomObject]@{
-                        Target = $line
-                        Type   = "Auto"
-                    })
-                }
-            }
-        }
-    }
-
-    return $list |
-        Group-Object { "$($_.Type)|$($_.Target)" } |
-        ForEach-Object { $_.Group[0] }
-}
-
 function Write-VTSummary {
     param($Result)
 
@@ -148,10 +86,68 @@ function Write-VTSummary {
     Write-Host "    $($Result.Enlace)" -ForegroundColor DarkGray
 }
 
-function Get-OutputResults {
+function Get-TargetConfidence {
     param([System.Collections.IEnumerable]$Results)
 
+    $signals = @{}
     foreach ($result in $Results) {
+        $risk = $null
+
+        switch ($result.Proveedor) {
+            "VirusTotal" {
+                $malicious = 0
+                $suspicious = 0
+                $harmless = 0
+                $undetected = 0
+
+                if ([int]::TryParse([string]$result.Maliciosos, [ref]$malicious) -and
+                    [int]::TryParse([string]$result.Sospechosos, [ref]$suspicious) -and
+                    [int]::TryParse([string]$result.Limpios, [ref]$harmless) -and
+                    [int]::TryParse([string]$result.SinDetectar, [ref]$undetected)) {
+                    $total = $malicious + $suspicious + $harmless + $undetected
+                    if ($total -gt 0) {
+                        $risk = (100 * $malicious + 50 * $suspicious) / $total
+                    }
+                }
+            }
+            "AbuseIPDB" {
+                $score = 0
+                if ([int]::TryParse([string]$result.AbuseConfidence, [ref]$score)) { $risk = $score }
+            }
+            "urlscan.io" {
+                $score = 0
+                if ([int]::TryParse([string]$result.UrlscanScore, [ref]$score)) {
+                    $risk = ($score + 100) / 2
+                }
+            }
+        }
+
+        if ($null -ne $risk) {
+            if (-not $signals.ContainsKey($result.Target)) {
+                $signals[$result.Target] = New-Object System.Collections.Generic.List[double]
+            }
+            [void]$signals[$result.Target].Add([Math]::Min(100, [Math]::Max(0, $risk)))
+        }
+    }
+
+    $confidence = @{}
+    foreach ($target in $signals.Keys) {
+        $score = [Math]::Round(($signals[$target] | Measure-Object -Average).Average)
+        $color = if ($score -ge 67) { "Red" } elseif ($score -ge 34) { "Yellow" } else { "Green" }
+        $confidence[$target] = [PSCustomObject]@{ Score = $score; Color = $color }
+    }
+
+    return $confidence
+}
+
+function Get-OutputResults {
+    param(
+        [System.Collections.IEnumerable]$Results,
+        [hashtable]$ConfidenceByTarget
+    )
+
+    foreach ($result in $Results) {
+        $confidence = $ConfidenceByTarget[$result.Target]
         [PSCustomObject]@{
             Target          = $result.Target
             Proveedor       = $result.Proveedor
@@ -182,8 +178,27 @@ function Get-OutputResults {
             WhoisStatus     = $result.WhoisStatus
             WhoisCountry    = $result.WhoisCountry
             WhoisNetwork    = $result.WhoisNetwork
+            Confianza       = if ($confidence) { "$($confidence.Score)%" } else { "N/D" }
+            ConfidenceColor = if ($confidence) { $confidence.Color } else { "DarkGray" }
             Enlace          = $result.Enlace
         }
+    }
+}
+
+function Write-ResultsSummary {
+    param([System.Collections.IEnumerable]$Results)
+
+    $format = "{0,-32} {1,-15} {2,-8} {3,-10} {4,-12} {5,-13} {6,-11} "
+    Write-Host ($format -f "Target", "Proveedor", "Tipo", "Maliciosos", "Sospechosos", "URLScan", "Abuso") -ForegroundColor DarkGray -NoNewline
+    Write-Host "Confianza" -ForegroundColor DarkGray
+    Write-Host ($format -f "------", "---------", "----", "----------", "------------", "-------", "-----") -ForegroundColor DarkGray -NoNewline
+    Write-Host "---------" -ForegroundColor DarkGray
+
+    foreach ($result in $Results) {
+        Write-Host ($format -f `
+                $result.Target, $result.Proveedor, $result.Tipo, $result.Maliciosos,
+                $result.Sospechosos, $result.UrlscanScore, $result.AbuseConfidence) -NoNewline
+        Write-Host ("{0,9}" -f $result.Confianza) -ForegroundColor $result.ConfidenceColor
     }
 }
 
@@ -191,14 +206,54 @@ $ConfigPath = Resolve-ConfigPath -ExplicitPath $ConfigPath
 $config = Get-ScannerConfig -Path $ConfigPath
 if (-not $config) { return }
 
-$targetList = Get-TargetList `
-    -Targets $Targets `
-    -Domain $Domain `
-    -IPAddress $IPAddress `
-    -InputFile $InputFile
+$inputTargets = @()
+if ($InputFile) {
+    if (-not (Test-Path -LiteralPath $InputFile)) {
+        Write-Error "No se encuentra el fichero de entrada: $InputFile"
+    }
+    else {
+        $inputTargets = foreach ($line in Get-Content -LiteralPath $InputFile) {
+            $line = $line.Trim()
+            if ($line -and -not $line.StartsWith("#")) { $line }
+        }
+    }
+}
+
+$targetList = @()
+foreach ($target in (@($Targets) + @($inputTargets))) {
+    if (-not [string]::IsNullOrWhiteSpace($target)) {
+        $targetList += [PSCustomObject]@{ Target = $target.Trim(); Type = "Auto" }
+    }
+}
+
+foreach ($target in $Domain) {
+    if (-not [string]::IsNullOrWhiteSpace($target)) {
+        $targetList += [PSCustomObject]@{ Target = $target.Trim(); Type = "Domain" }
+    }
+}
+
+foreach ($target in $Url) {
+    if (-not [string]::IsNullOrWhiteSpace($target)) {
+        $targetList += [PSCustomObject]@{ Target = $target.Trim(); Type = "URL" }
+    }
+}
+
+foreach ($target in $IPAddress) {
+    if (-not [string]::IsNullOrWhiteSpace($target)) {
+        $targetList += [PSCustomObject]@{ Target = $target.Trim(); Type = "IP" }
+    }
+}
+
+$uniqueTargets = [ordered]@{}
+foreach ($target in $targetList) {
+    $key = "$($target.Type)|$($target.Target)"
+    if (-not $uniqueTargets.Contains($key)) { $uniqueTargets[$key] = $target }
+}
+$targetList = @($uniqueTargets.Values)
 if (-not $targetList -or $targetList.Count -eq 0) {
     Write-Host "Uso:" -ForegroundColor Yellow
-    Write-Host "  .\Scanner.ps1 -Targets dominio1.com,https://url-sospechosa.com" -ForegroundColor Yellow
+    Write-Host "  .\Scanner.ps1 -D dominio1.com | -IP 1.1.1.1 | -U https://sitio.com" -ForegroundColor Yellow
+    Write-Host "  .\Scanner.ps1 -Targets dominio1.com,1.1.1.1,https://sitio.com" -ForegroundColor Yellow
     Write-Host "  .\Scanner.ps1 -InputFile targets.txt" -ForegroundColor Yellow
     return
 }
@@ -241,7 +296,7 @@ foreach ($item in $targetList) {
             -TargetType $targetType `
             -ApiKey $config.VirusTotal.ApiKey
         Write-VTSummary -Result $vtResult
-        $allResults.Add($vtResult)
+        [void]$allResults.Add($vtResult)
     }
     catch {
         Write-Warning "VirusTotal: $_"
@@ -255,7 +310,7 @@ foreach ($item in $targetList) {
                 -RdapBaseUri $rdapBaseUri
 
             Write-WhoisSummary -Result $whoisResult
-            $allResults.Add($whoisResult)
+            [void]$allResults.Add($whoisResult)
         }
         catch {
             Write-Warning "WHOIS/RDAP: $_"
@@ -270,7 +325,7 @@ foreach ($item in $targetList) {
                 -Visibility $config.Urlscan.Visibility
 
             Write-UrlscanSummary -Result $urlscanResult
-            $allResults.Add($urlscanResult)
+            [void]$allResults.Add($urlscanResult)
         }
         catch {
             Write-Warning "urlscan.io: $_"
@@ -285,7 +340,7 @@ foreach ($item in $targetList) {
                 -ApiKey $config.AbuseIPDB.ApiKey
 
             Write-AbuseIPDBSummary -Result $abuseResult
-            $allResults.Add($abuseResult)
+            [void]$allResults.Add($abuseResult)
         }
         catch {
             Write-Warning "AbuseIPDB: $_"
@@ -298,8 +353,9 @@ foreach ($item in $targetList) {
 }
 
 Write-Host "`n=== Resumen ===" -ForegroundColor Cyan
-$outputResults = Get-OutputResults -Results $allResults
-$outputResults | Format-Table Target, Proveedor, Tipo, Maliciosos, Sospechosos, UrlscanScore, UrlscanStatus, WhoisCountry, AbuseConfidence, TotalReports, CountryCode -AutoSize
+$confidenceByTarget = Get-TargetConfidence -Results $allResults
+$outputResults = Get-OutputResults -Results $allResults -ConfidenceByTarget $confidenceByTarget
+Write-ResultsSummary -Results $outputResults
 
 if ($OutputCsv) {
     $outputResults | Export-Csv -Path $OutputCsv -NoTypeInformation -Encoding UTF8
