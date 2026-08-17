@@ -50,6 +50,35 @@ function Invoke-UrlscanRequest {
     }
 }
 
+function Get-UrlscanDomainAge {
+    param($Result)
+
+    $ageDays = 0
+    $hasAge = [int]::TryParse([string]$Result.page.domainAgeDays, [ref]$ageDays)
+    if (-not $hasAge) {
+        $hasAge = [int]::TryParse([string]$Result.page.apexDomainAgeDays, [ref]$ageDays)
+    }
+
+    if (-not $hasAge) {
+        return [PSCustomObject]@{ Date = "N/D"; Days = "N/D"; Color = "DarkGray" }
+    }
+
+    $scanDate = [DateTime]::UtcNow
+    if ($Result.task.time) {
+        $parsedDate = [DateTime]::MinValue
+        if ([DateTime]::TryParse([string]$Result.task.time, [ref]$parsedDate)) {
+            $scanDate = $parsedDate.ToUniversalTime()
+        }
+    }
+
+    $color = if ($ageDays -lt 30) { "Red" } elseif ($ageDays -le 90) { "Yellow" } elseif ($ageDays -gt 365) { "Green" } else { "Yellow" }
+    return [PSCustomObject]@{
+        Date  = $scanDate.AddDays(-$ageDays).ToString("yyyy-MM-dd")
+        Days  = $ageDays
+        Color = $color
+    }
+}
+
 function Get-UrlscanReport {
     param(
         [Parameter(Mandatory)]
@@ -58,11 +87,20 @@ function Get-UrlscanReport {
         [Parameter(Mandatory)]
         [string]$ApiKey,
 
+        [string]$DisplayTarget,
+
+        [ValidateSet("URL", "Domain")]
+        [string]$TargetType = "URL",
+
         [ValidateSet("public", "unlisted", "private")]
         [string]$Visibility = "unlisted"
     )
 
-    Write-Host "    [urlscan.io] Enviando URL para analisis..." -ForegroundColor DarkCyan
+    $reportTarget = if ($DisplayTarget) { $DisplayTarget } else { $Url }
+    $reportType = if ($TargetType -eq "Domain") { "Dominio" } else { "URL" }
+
+    Write-Host "`n  [urlscan.io]" -ForegroundColor White
+    Write-Host "  Estado: enviando URL para analisis..." -ForegroundColor DarkCyan
     $submission = Invoke-UrlscanRequest `
         -Uri "$script:UrlscanBaseUri/scan/" `
         -ApiKey $ApiKey `
@@ -73,31 +111,42 @@ function Get-UrlscanReport {
     if (-not $uuid) { throw "urlscan.io no devolvio un identificador de analisis." }
 
     $resultLink = if ($submission.result) { $submission.result } else { "https://urlscan.io/result/$uuid/" }
-    Start-Sleep -Seconds 15
-    $result = Invoke-UrlscanRequest `
-        -Uri "$script:UrlscanBaseUri/result/$uuid/" `
-        -ApiKey $ApiKey `
-        -AllowNotFound
+    Write-Host "  Estado: esperando resultado..." -ForegroundColor DarkCyan
+    Start-Sleep -Seconds 10
 
-    if (-not $result) {
+    do {
+        $result = Invoke-UrlscanRequest `
+            -Uri "$script:UrlscanBaseUri/result/$uuid/" `
+            -ApiKey $ApiKey `
+            -AllowNotFound
+
+        if (-not $result) { Start-Sleep -Seconds 5 }
+    } while (-not $result)
+
+    if ([string]::IsNullOrWhiteSpace([string]$result.page.status)) {
         return [PSCustomObject]@{
-            Target            = $Url
-            Tipo              = "URL"
+            Target            = $reportTarget
+            Tipo              = $reportType
             UrlscanUuid       = $uuid
-            UrlscanScore      = "pendiente"
-            UrlscanCategories = "pendiente"
-            UrlscanStatus     = "pendiente"
-            UrlscanCountry    = "N/D"
-            UrlscanDomain     = "N/D"
-            UrlscanVisibility = $submission.visibility
+            UrlscanScore      = "N/D"
+            UrlscanCategories = "N/D"
+            UrlscanStatus     = "No evaluable"
+            UrlscanCountry    = $result.page.country
+            UrlscanDomain     = $result.page.domain
+            UrlscanVisibility = $result.task.visibility
+            UrlscanScanFailed = $true
+            UrlscanDomainCreated = "N/D"
+            UrlscanDomainAgeDays = "N/D"
+            UrlscanDomainAgeColor = "DarkGray"
             Enlace            = $resultLink
             Proveedor         = "urlscan.io"
         }
     }
 
+    $domainAge = Get-UrlscanDomainAge -Result $result
     return [PSCustomObject]@{
-        Target            = $Url
-        Tipo              = "URL"
+        Target            = $reportTarget
+        Tipo              = $reportType
         UrlscanUuid       = $uuid
         UrlscanScore      = $result.verdicts.urlscan.score
         UrlscanCategories = $result.verdicts.urlscan.categories -join ", "
@@ -105,6 +154,10 @@ function Get-UrlscanReport {
         UrlscanCountry    = $result.page.country
         UrlscanDomain     = $result.page.domain
         UrlscanVisibility = $result.task.visibility
+        UrlscanScanFailed = $false
+        UrlscanDomainCreated = $domainAge.Date
+        UrlscanDomainAgeDays = $domainAge.Days
+        UrlscanDomainAgeColor = $domainAge.Color
         Enlace            = $resultLink
         Proveedor         = "urlscan.io"
     }
@@ -117,19 +170,23 @@ function Write-UrlscanSummary {
     $isNumeric = [int]::TryParse([string]$Result.UrlscanScore, [ref]$score)
     $color = "DarkGray"
 
-    if ($isNumeric) {
+    if ($Result.UrlscanScanFailed) {
+        $color = "Yellow"
+    }
+    elseif ($isNumeric) {
         if ($score -ge 50) { $color = "Red" }
         elseif ($score -gt 0) { $color = "Yellow" }
         else { $color = "Green" }
     }
 
     Write-Host (
-        "    urlscan.io -> score: {0} | estado HTTP: {1} | dominio: {2}" -f
+        "  Resultado: score: {0} | estado HTTP: {1} | dominio: {2}" -f
         $Result.UrlscanScore,
         $Result.UrlscanStatus,
         $Result.UrlscanDomain
     ) -ForegroundColor $color
-    Write-Host "    $($Result.Enlace)" -ForegroundColor DarkGray
+    Write-Host "  Dominio creado: $($Result.UrlscanDomainCreated) ($($Result.UrlscanDomainAgeDays) dias)" -ForegroundColor $Result.UrlscanDomainAgeColor
+    Write-Host "  GUI: $($Result.Enlace)" -ForegroundColor DarkGray
 }
 
 Export-ModuleMember -Function `

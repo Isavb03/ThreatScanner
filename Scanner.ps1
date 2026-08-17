@@ -81,9 +81,10 @@ function Write-VTSummary {
         else { $color = "Green" }
     }
 
-    Write-Host ("    VirusTotal -> maliciosos: {0} | sospechosos: {1} | limpios: {2}" -f `
+    Write-Host "`n  [VirusTotal]" -ForegroundColor White
+    Write-Host ("  Resultado: maliciosos: {0} | sospechosos: {1} | limpios: {2}" -f `
             $Result.Maliciosos, $Result.Sospechosos, $Result.Limpios) -ForegroundColor $color
-    Write-Host "    $($Result.Enlace)" -ForegroundColor DarkGray
+    Write-Host "  GUI: $($Result.Enlace)" -ForegroundColor DarkGray
 }
 
 function Get-TargetConfidence {
@@ -172,6 +173,9 @@ function Get-OutputResults {
             UrlscanCountry  = $result.UrlscanCountry
             UrlscanDomain   = $result.UrlscanDomain
             UrlscanVisibility = $result.UrlscanVisibility
+            UrlscanScanFailed = $result.UrlscanScanFailed
+            UrlscanDomainCreated = $result.UrlscanDomainCreated
+            UrlscanDomainAgeDays = $result.UrlscanDomainAgeDays
             WhoisRegistrar  = $result.WhoisRegistrar
             WhoisCreated    = $result.WhoisCreated
             WhoisExpires    = $result.WhoisExpires
@@ -266,6 +270,7 @@ if (-not $config.VirusTotal.ApiKey -or $config.VirusTotal.ApiKey -eq "TU_API_KEY
 $allResults = New-Object System.Collections.Generic.List[object]
 $rdapBaseUri = $config.Whois.RdapBaseUri
 if (-not $rdapBaseUri) { $rdapBaseUri = "https://rdap.org" }
+$separator = ("-" * 78) -join ""
 
 foreach ($item in $targetList) {
 
@@ -288,7 +293,9 @@ foreach ($item in $targetList) {
         }
     }
 
-    Write-Host "`n[*] Analizando: $target [$targetType]" -ForegroundColor Cyan
+    Write-Host "`n$separator" -ForegroundColor DarkCyan
+    Write-Host "  OBJETIVO: $target [$targetType]" -ForegroundColor Cyan
+    Write-Host $separator -ForegroundColor DarkCyan
 
     try {
         $vtResult = Get-VTReport `
@@ -317,10 +324,13 @@ foreach ($item in $targetList) {
         }
     }
 
-    if ($targetType -eq "URL" -and $config.Urlscan.ApiKey -and $config.Urlscan.ApiKey -ne "TU_API_KEY_AQUI") {
+    if ($targetType -in @("URL", "Domain") -and $config.Urlscan.ApiKey -and $config.Urlscan.ApiKey -ne "TU_API_KEY_AQUI") {
         try {
+            $urlscanUrl = if ($targetType -eq "Domain") { "https://$target" } else { $target }
             $urlscanResult = Get-UrlscanReport `
-                -Url $target `
+                -Url $urlscanUrl `
+                -DisplayTarget $target `
+                -TargetType $targetType `
                 -ApiKey $config.Urlscan.ApiKey `
                 -Visibility $config.Urlscan.Visibility
 

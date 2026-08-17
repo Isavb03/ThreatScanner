@@ -126,9 +126,10 @@ function Get-WhoisReport {
 function Write-WhoisSummary {
     param([Parameter(Mandatory)]$Result)
 
+    Write-Host "`n  [WHOIS / RDAP]" -ForegroundColor White
     if ($Result.Tipo -eq "Dominio") {
         Write-Host (
-            "    WHOIS/RDAP -> registrador: {0} | creado: {1} | expira: {2}" -f
+            "  Resultado: registrador: {0} | creado: {1} | expira: {2}" -f
             $Result.WhoisRegistrar,
             $Result.WhoisCreated,
             $Result.WhoisExpires
@@ -136,14 +137,14 @@ function Write-WhoisSummary {
     }
     else {
         Write-Host (
-            "    WHOIS/RDAP -> red: {0} | pais: {1} | estado: {2}" -f
+            "  Resultado: red: {0} | pais: {1} | estado: {2}" -f
             $Result.WhoisNetwork,
             $Result.WhoisCountry,
             $Result.WhoisStatus
         ) -ForegroundColor DarkCyan
     }
 
-    Write-Host "    $($Result.Enlace)" -ForegroundColor DarkGray
+    Write-Host "  GUI: $($Result.Enlace)" -ForegroundColor DarkGray
 }
 
 Export-ModuleMember -Function `

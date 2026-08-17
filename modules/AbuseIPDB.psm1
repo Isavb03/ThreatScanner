@@ -78,7 +78,8 @@ function Get-AbuseIPDBReport {
         throw "'$IPAddress' no es una dirección IP válida."
     }
 
-    Write-Host "    [AbuseIPDB] Consultando..." -ForegroundColor DarkCyan
+    Write-Host "`n  [AbuseIPDB]" -ForegroundColor White
+    Write-Host "  Estado: consultando..." -ForegroundColor DarkCyan
 
     $response = Invoke-AbuseIPDBRequest `
         -IPAddress $IPAddress `
@@ -134,14 +135,14 @@ function Write-AbuseIPDBSummary {
     }
 
     Write-Host (
-        "    AbuseIPDB -> confianza abuso: {0}% | reports: {1} | país: {2} | ISP: {3}" -f
+        "  Resultado: confianza abuso: {0}% | reports: {1} | pais: {2} | ISP: {3}" -f
         $Result.AbuseConfidence,
         $Result.TotalReports,
         $Result.CountryCode,
         $Result.ISP
     ) -ForegroundColor $color
 
-    Write-Host "    $($Result.Enlace)" -ForegroundColor DarkGray
+    Write-Host "  GUI: $($Result.Enlace)" -ForegroundColor DarkGray
 }
 
 

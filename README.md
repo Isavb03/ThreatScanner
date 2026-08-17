@@ -27,4 +27,6 @@
 
 `-Targets` detecta automáticamente cada tipo. `-D`, `-IP` y `-U` fuerzan el tipo indicado.
 
+urlscan.io analiza URLs y dominios. Los dominios se envian como `https://<dominio>`.
+
 La columna `Confianza` mide el riesgo combinado: verde (0-33%), amarillo (34-66%) y rojo (67-100%). Combina VirusTotal, AbuseIPDB y urlscan.io; RDAP/WHOIS no se usa para el cálculo.
